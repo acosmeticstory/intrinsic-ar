@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>intrinsic - Texture AR</title>
+  <!-- A-Frame MUST load before MindAR -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <!-- Tesseract.js for OCR fallback -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden; background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #fff;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    /* ── Camera feed (our own, behind everything) ── */
+    #camera-video {
+      position: fixed; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover; z-index: 0;
+    }
+
+    /* ── A-Frame scene: transparent overlay ── */
+    a-scene { position: fixed !important; top: 0; left: 0; z-index: 1; }
+    a-scene .a-canvas { background: transparent !important; }
+
+    /* ── Loading Screen ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #0a0a0a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      transition: opacity 0.6s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading h1 {
+      font-size: 1.2rem; font-weight: 300;
+      letter-spacing: 0.35em; color: #c8b89a;
+      margin-bottom: 1.5rem;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 2px solid rgba(200,184,154,0.2);
+      border-top-color: #c8b89a; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-text {
+      margin-top: 1.2rem; font-size: 0.78rem;
+      color: rgba(255,255,255,0.4);
+      text-align: center; padding: 0 2rem;
+    }
+
+    /* ── Debug ── */
+    #debug-log {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 10000;
+      max-height: 35vh; overflow-y: auto;
+      background: rgba(0,0,0,0.92);
+      font-family: monospace; font-size: 0.6rem;
+      color: #0f0; padding: 0.5rem; line-height: 1.5;
+      display: none;
+    }
+    #debug-log.show { display: block; }
+    .a-enter-vr { display: none !important; }
+
+    /* ── Top Bar ── */
+    #top-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 500;
+      padding: 0.8rem 1rem;
+      padding-top: calc(env(safe-area-inset-top, 0.5rem) + 0.5rem);
+      background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .brand { font-size: 0.65rem; letter-spacing: 0.3em; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+
+    /* ── Scan Guide ── */
+    #scan-guide {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 400; text-align: center;
+      transition: opacity 0.4s;
+    }
+    #scan-guide.hidden { opacity: 0; pointer-events: none; }
+    .guide-box {
+      width: 160px; height: 160px;
+      border: 1.5px solid rgba(200,184,154,0.35);
+      border-radius: 14px; margin: 0 auto 1rem;
+      position: relative; animation: breathe 2.5s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: 0.4; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.03); }
+    }
+    .guide-box::before, .guide-box::after {
+      content: ''; position: absolute; width: 24px; height: 24px;
+      border-color: #c8b89a; border-style: solid;
+    }
+    .guide-box::before { top: -1.5px; left: -1.5px; border-width: 2.5px 0 0 2.5px; border-radius: 10px 0 0 0; }
+    .guide-box::after { bottom: -1.5px; right: -1.5px; border-width: 0 2.5px 2.5px 0; border-radius: 0 0 10px 0; }
+    .guide-text { font-size: 0.78rem; color: rgba(255,255,255,0.55); line-height: 1.6; transition: opacity 0.3s; }
+    #scan-guide.recognizing .guide-box { border-color: rgba(200,184,154,0.7); animation: none; opacity: 1; }
+    #scan-guide.recognizing .guide-text { color: #c8b89a; }
+    html[dir="rtl"] #info-panel, html[dir="rtl"] .props-row, html[dir="rtl"] .btns-row { direction: rtl; }
+
+    /* ── OCR Status Indicator ── */
+    #ocr-status {
+      margin-top: 0.8rem; font-size: 0.7rem; color: rgba(255,255,255,0.4);
+      letter-spacing: 0.05em; transition: all 0.3s;
+      padding: 0.3rem 0.8rem; border-radius: 20px;
+      background: rgba(0,0,0,0.3);
+      display: inline-block;
+    }
+    #ocr-status.active { color: rgba(120,220,255,0.9); background: rgba(120,220,255,0.1); }
+    #ocr-status.error { color: rgba(255,100,100,0.9); background: rgba(255,100,100,0.1); }
+    #ocr-status .ocr-dot {
+      display: inline-block; width: 6px; height: 6px;
+      border-radius: 50%; background: rgba(120,220,255,0.7);
+      margin-right: 5px; vertical-align: middle;
+      animation: ocrPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes ocrPulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    /* ── OCR Debug Preview ── */
+    #ocr-preview {
+      position: fixed; bottom: 10px; right: 10px; z-index: 8000;
+      background: rgba(0,0,0,0.85); border-radius: 10px;
+      padding: 6px; display: none; border: 1px solid rgba(120,220,255,0.3);
+    }
+    #ocr-preview.show { display: block; }
+    #ocr-preview canvas { display: block; width: 140px; border-radius: 6px; }
+    #ocr-preview-text {
+      font-size: 0.55rem; color: #0f0; font-family: monospace;
+      max-width: 140px; word-break: break-all; margin-top: 4px;
+      max-height: 3rem; overflow: hidden;
+    }
+
+    /* ── Manual Select ── */
+    .top-btn {
+      padding: 0.35rem 0.7rem;
+      background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px; color: rgba(255,255,255,0.6); font-size: 0.6rem;
+      cursor: pointer; letter-spacing: 0.03em; white-space: nowrap;
+    }
+    .guide-select-btn:active { background: rgba(200,184,154,0.2); }
+    #select-panel {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 550;
+      max-height: 70vh; background: rgba(10,10,10,0.97);
+      border-radius: 16px 16px 0 0;
+      transform: translateY(100%);
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      display: flex; flex-direction: column;
+    }
+    #select-panel.open { transform: translateY(0); }
+    .sel-header {
+      padding: 1rem 1rem 0.6rem; display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .sel-title { font-size: 0.75rem; letter-spacing: 0.12em; color: #c8b89a; }
+    .sel-close {
+      width: 28px; height: 28px; border: none; border-radius: 6px;
+      background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5);
+      font-size: 1rem; cursor: pointer;
+    }
+    .sel-grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+      padding: 0.8rem; overflow-y: auto; flex: 1;
+    }
+    .sel-item {
+      text-align: center; cursor: pointer; border-radius: 8px;
+      padding: 4px; transition: background 0.2s;
+    }
+    .sel-item:active { background: rgba(200,184,154,0.15); }
+    .sel-item img {
+      width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px;
+      background: rgba(255,255,255,0.05);
+    }
+    .sel-item .sel-label { font-size: 0.5rem; color: rgba(255,255,255,0.4); margin-top: 3px; }
+    #select-overlay {
+      position: fixed; inset: 0; z-index: 549;
+      background: rgba(0,0,0,0.4); display: none;
+    }
+    #select-overlay.show { display: block; }
+
+    /* ── Info Panel ── */
+    #info-panel {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 500;
+      background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.75) 75%, transparent 100%);
+      padding: 1.5rem 1rem 1.2rem;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0.8rem) + 0.8rem);
+      transform: translateY(100%);
+      transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    #info-panel.show { transform: translateY(0); }
+    .panel-product-name { font-size: 0.85rem; font-weight: 400; letter-spacing: 0.08em; color: #c8b89a; margin-bottom: 0.5rem; }
+    .panel-video-wrap { border-radius: 10px; overflow: hidden; margin-bottom: 0.7rem; position: relative; background: #111; }
+    .panel-video-wrap video { width: 100%; display: block; border-radius: 10px; max-height: 160px; object-fit: cover; }
+    .props-row { display: flex; gap: 0.4rem; margin-bottom: 0.7rem; }
+    .prop { flex: 1; background: rgba(255,255,255,0.07); border-radius: 8px; padding: 0.45rem; text-align: center; }
+    .prop-lbl { font-size: 0.48rem; letter-spacing: 0.1em; color: rgba(255,255,255,0.3); }
+    .prop-val { font-size: 0.95rem; font-weight: 300; color: #c8b89a; margin-top: 0.08rem; }
+    .prop-val .unit { font-size: 0.55rem; color: rgba(255,255,255,0.3); }
+    .btns-row { display: flex; gap: 0.5rem; }
+    .btn { flex: 1; padding: 0.7rem; border: none; border-radius: 10px; font-size: 0.73rem; font-weight: 500; cursor: pointer; text-decoration: none; text-align: center; display: block; }
+    .btn-gold { background: #c8b89a; color: #0a0a0a; }
+    .btn-ghost { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.12); }
+    .btn-rescan { background: rgba(255,255,255,0.08); color: #c8b89a; border: 1px solid rgba(200,184,154,0.3); }
+    .guide-sub { font-size: 0.62rem; opacity: 0.45; margin-top: 0.3rem; line-height: 1.5; }
+
+
+    /* ── Touch-to-Focus Indicator ── */
+    .focus-ring {
+      position: fixed; z-index: 450;
+      width: 64px; height: 64px;
+      border: 1.5px solid #c8b89a;
+      border-radius: 3px;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      animation: focusPulse 0.8s ease-out forwards;
+    }
+    .focus-ring::before {
+      content: ''; position: absolute;
+      top: 50%; left: 50%;
+      width: 8px; height: 8px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: rgba(200,184,154,0.6);
+    }
+    @keyframes focusPulse {
+      0% { width: 90px; height: 90px; opacity: 1; border-color: #c8b89a; }
+      40% { width: 64px; height: 64px; opacity: 1; border-color: #c8b89a; }
+      100% { width: 60px; height: 60px; opacity: 0; border-color: rgba(200,184,154,0.2); }
+    }
+
+    /* ── History ── */
+    #history-btn {
+      width: 32px; height: 32px; border: none; border-radius: 8px;
+      background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.6);
+      font-size: 0.75rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    #history-btn .badge {
+      position: absolute; top: -3px; right: -3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #c8b89a; color: #0a0a0a;
+      font-size: 0.5rem; font-weight: 700;
+      display: none; align-items: center; justify-content: center;
+    }
+    #history-btn .badge.show { display: flex; }
+    #history-panel {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 600;
+      width: 260px; background: rgba(10,10,10,0.96);
+      transform: translateX(100%);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex; flex-direction: column;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    #history-panel.open { transform: translateX(0); }
+    .hist-header {
+      padding: 1rem; padding-top: calc(env(safe-area-inset-top, 0.5rem) + 0.8rem);
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .hist-title { font-size: 0.75rem; letter-spacing: 0.15em; color: #c8b89a; }
+    .hist-close {
+      width: 28px; height: 28px; border: none; border-radius: 6px;
+      background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5);
+      font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .hist-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+    .hist-empty { text-align: center; color: rgba(255,255,255,0.25); font-size: 0.75rem; padding: 3rem 1rem; }
+    .hist-item {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.6rem; border-radius: 8px; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .hist-item:active { background: rgba(200,184,154,0.15); }
+    .hist-item-img {
+      width: 40px; height: 40px; border-radius: 6px; object-fit: cover;
+      background: rgba(255,255,255,0.05);
+    }
+    .hist-item-info { flex: 1; }
+    .hist-item-name { font-size: 0.75rem; color: rgba(255,255,255,0.8); }
+    .hist-item-time { font-size: 0.55rem; color: rgba(255,255,255,0.25); margin-top: 2px; }
+    #history-overlay {
+      position: fixed; inset: 0; z-index: 599;
+      background: rgba(0,0,0,0.4); display: none;
+    }
+    #history-overlay.show { display: block; }
+  </style>
+</head>
+<body>
+
+  <!-- Our own camera video (guaranteed to show) -->
+  <video id="camera-video" autoplay playsinline muted></video>
+
+  <div id="debug-log"></div>
+
+  <div id="loading">
+    <h1>intrinsic</h1>
+    <div class="spinner"></div>
+    <div id="load-text">Starting...</div>
+  </div>
+
+  <div id="top-bar">
+    <span class="brand" id="brand-logo">acosmeticstory</span>
+    <div style="display:flex;gap:6px;align-items:center;">
+    <button class="top-btn" id="select-btn" onclick="toggleSelect()" data-i18n="selectProduct">직접 선택</button>
+    <button id="history-btn" onclick="toggleHistory()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span class="badge" id="hist-badge">0</span>
+    </button>
+    </div>
+  </div>
+
+
+  <div id="history-overlay" onclick="toggleHistory()"></div>
+  <div id="history-panel">
+    <div class="hist-header">
+      <span class="hist-title" data-i18n="history">HISTORY</span>
+      <button class="hist-close" onclick="toggleHistory()">&times;</button>
+    </div>
+    <div class="hist-list" id="hist-list">
+      <div class="hist-empty" id="hist-empty" data-i18n="noHistory">No scanned products yet</div>
+    </div>
+  </div>
+
+  <div id="scan-guide">
+    <div class="guide-box"></div>
+    <div class="guide-text" id="guide-text"></div>
+    <div id="ocr-status">OCR 대기 중</div>
+  </div>
+
+  <!-- OCR 디버그 미리보기 (로고 3번 탭으로 표시) -->
+  <div id="ocr-preview">
+    <canvas id="ocr-preview-canvas"></canvas>
+    <div id="ocr-preview-text">-</div>
+  </div>
+
+  <div id="select-overlay" onclick="toggleSelect()"></div>
+  <div id="select-panel">
+    <div class="sel-header">
+      <span class="sel-title" data-i18n="selectProduct">Select product</span>
+      <button class="sel-close" onclick="toggleSelect()">&times;</button>
+    </div>
+    <div class="sel-grid" id="sel-grid"></div>
+  </div>
+
+  <div id="info-panel">
+    <div class="panel-product-name" id="p-name">intrinsic no.0</div>
+    <div class="panel-video-wrap">
+      <video id="panel-video" playsinline webkit-playsinline muted loop crossorigin="anonymous"></video>
+    </div>
+    <div class="props-row">
+      <div class="prop"><div class="prop-lbl" data-i18n="hardness">Hardness</div><div class="prop-val" id="p-hard">-</div></div>
+      <div class="prop"><div class="prop-lbl">pH</div><div class="prop-val" id="p-ph">-</div></div>
+      <div class="prop"><div class="prop-lbl" data-i18n="type">Type</div><div class="prop-val" id="p-type">-</div></div>
+      <div class="prop"><div class="prop-lbl" data-i18n="moisture">Moisture</div><div class="prop-val"><span id="p-moist">-</span><span class="unit">%</span></div></div>
+    </div>
+    <div class="btns-row">
+      <a class="btn btn-gold" id="btn-buy" href="#" target="_blank" data-i18n="details">Details</a>
+      <button class="btn btn-rescan" id="btn-rescan" onclick="resetScan()" data-i18n="rescan">Scan Again</button>
+      <a class="btn btn-ghost" id="btn-compare" href="https://www.acosmeticstory.com/pages/%EB%B3%B8%EC%97%B0-%EB%9D%BC%EC%9D%B8-%EB%B9%84%EA%B5%90" target="_blank" data-i18n="compare">Compare All</a>
+    </div>
+  </div>
+
+  <!-- A-Frame scene: MindAR handles recognition -->
+  <!-- Combined .mind: 163 targets (30 products × 3 weights + photos) -->
+  <a-scene
+    mindar-image="imageTargetSrc: targets_all.mind; maxTrack: 1; uiLoading: no; uiScanning: no; uiError: no; warmupTolerance: 12; missTolerance: 12; filterMinCF: 0.00001; filterBeta: 5000;"
+    color-space="sRGB"
+    renderer="colorManagement: true; alpha: true;"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+    embedded
+  >
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    <!--
+      69 targets: 0-29 base (7g), 30-68 extras for problematic products
+      Compiled via Node.js (compile-enhanced.js) with guaranteed order
+    -->
+    <script>
+      // targetIndex → productNo mapping (0-29 direct, 30-45 ignored for now)
+      var TARGET_MAP=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,1,1,6,6,6,6,6,9,9,9,9,9,12,12,12,12,12,13,13,21,21,21,21,21,23,23,23,23,23,26,26,26,26,26,29,29,29,29,29];
+
+      var html = '';
+      for (var i = 0; i < TARGET_MAP.length; i++) {
+        html += '<a-entity mindar-image-target="targetIndex: ' + i + '" data-product="' + TARGET_MAP[i] + '"></a-entity>\n';
+      }
+      document.currentScript.insertAdjacentHTML('beforebegin', html);
+      window._totalTargets = TARGET_MAP.length;
+    </script>
+  </a-scene>
+
+  <script>
+    const debugEl = document.getElementById('debug-log');
+    function dlog(msg) {
+      const ts = new Date().toLocaleTimeString();
+      debugEl.innerHTML += `<div>[${ts}] ${msg}</div>`;
+      debugEl.scrollTop = debugEl.scrollHeight;
+    }
+    window.onerror = (m) => dlog('<span style="color:red">ERR: '+m+'</span>');
+
+    // ── 디버그 로그 토글 (브랜드 로고 3번 탭) ──
+    let brandTapCount = 0;
+    let brandTapTimer = null;
+    document.getElementById('brand-logo').addEventListener('click', function(e) {
+      e.stopPropagation();
+      brandTapCount++;
+      if (brandTapTimer) clearTimeout(brandTapTimer);
+      brandTapTimer = setTimeout(() => { brandTapCount = 0; }, 1000);
+      if (brandTapCount >= 3) {
+        debugEl.classList.toggle('show');
+        document.getElementById('ocr-preview').classList.toggle('show');
+        brandTapCount = 0;
+      }
+    });
+
+    let products = null;
+    let currentNo = -1;
+    let hideTimer = null;
+    let scanTimer = null;
+    let cameraStream = null;
+    const HIDE_DELAY = 15000; // 15초 후 자동 숨김
+
+
+    // 인식 피드백 사운드 (짧은 비프음)
+    let audioCtx = null;
+    function playBeep() {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = 1200;
+        gain.gain.value = 0.15;
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+        osc.stop(audioCtx.currentTime + 0.12);
+      } catch(e) {}
+    }
+
+    // ── Localization (11 languages) ──
+    const i18n = {
+      ko:      { details: '상세정보', compare: '물성 비교', hardness: 'Hardness', type: 'Type', moisture: 'Moisture',
+                 guide: '제품의 Graphic ID를 카메라에 비춰주세요', guideSub: '프레임에 맞추지 않아도 됩니다 · ~10cm 거리에서 자연스럽게',
+                 recognizing: '인식중입니다...', history: '스캔 기록', noHistory: '스캔한 제품이 없습니다', ago: '전', selectProduct: '직접 선택', rescan: '다시 스캔' },
+      en:      { details: 'Details', compare: 'Compare All', hardness: 'Hardness', type: 'Type', moisture: 'Moisture',
+                 guide: 'Point camera at the Graphic ID', guideSub: 'No need to fit in frame · Hold ~10cm away',
+                 recognizing: 'Recognizing...', history: 'HISTORY', noHistory: 'No scanned products yet', ago: 'ago', selectProduct: 'Select product', rescan: 'Scan Again' },
+      ja:      { details: '詳細情報', compare: '物性比較', hardness: '硬度', type: 'タイプ', moisture: '水分',
+                 guide: 'Graphic IDをカメラに向けてください', guideSub: 'フレームに合わせる必要はありません · 約10cmの距離で',
+                 recognizing: '認識中...', history: '履歴', noHistory: 'スキャンした製品はありません', ago: '前', selectProduct: '製品を選択', rescan: '再スキャン' },
+      'zh-cn': { details: '详细信息', compare: '物性比较', hardness: '硬度', type: '类型', moisture: '水分',
+                 guide: '将Graphic ID对准相机', guideSub: '无需对齐框架 · 保持约10cm距离',
+                 recognizing: '识别中...', history: '扫描记录', noHistory: '暂无扫描记录', ago: '前', selectProduct: '手动选择', rescan: '重新扫描' },
+      'zh-tw': { details: '詳細資訊', compare: '物性比較', hardness: '硬度', type: '類型', moisture: '水分',
+                 guide: '將Graphic ID對準相機', guideSub: '無需對齊框架 · 保持約10cm距離',
+                 recognizing: '辨識中...', history: '掃描紀錄', noHistory: '尚無掃描紀錄', ago: '前', selectProduct: '手動選擇', rescan: '重新掃描' },
+      vi:      { details: 'Chi tiết', compare: 'So sánh', hardness: 'Độ cứng', type: 'Loại', moisture: 'Độ ẩm',
+                 guide: 'Hướng camera vào Graphic ID', guideSub: 'Không cần căn khung · Giữ cách ~10cm',
+                 recognizing: 'Đang nhận diện...', history: 'LỊCH SỬ', noHistory: 'Chưa quét sản phẩm nào', ago: 'trước', selectProduct: 'Chọn sản phẩm', rescan: 'Quét lại' },
+      th:      { details: 'รายละเอียด', compare: 'เปรียบเทียบ', hardness: 'ความแข็ง', type: 'ประเภท', moisture: 'ความชุ่มชื้น',
+                 guide: 'ชี้กล้องไปที่ Graphic ID', guideSub: 'ไม่จำเป็นต้องจัดให้อยู่ในกรอบ · ห่าง ~10 ซม.',
+                 recognizing: 'กำลังจดจำ...', history: 'ประวัติ', noHistory: 'ยังไม่มีสินค้าที่สแกน', ago: 'ที่แล้ว', selectProduct: 'เลือกสินค้า', rescan: 'สแกนใหม่' },
+      ar:      { details: 'التفاصيل', compare: 'مقارنة', hardness: 'الصلابة', type: 'النوع', moisture: 'الرطوبة',
+                 guide: 'وجّه الكاميرا إلى Graphic ID', guideSub: 'لا حاجة للمحاذاة · على بعد ~10 سم',
+                 recognizing: '...جارٍ التعرّف', history: 'السجل', noHistory: 'لا توجد منتجات ممسوحة', ago: 'مضت', selectProduct: 'اختر المنتج', rescan: 'مسح مرة أخرى' },
+      fr:      { details: 'Détails', compare: 'Comparer', hardness: 'Dureté', type: 'Type', moisture: 'Hydratation',
+                 guide: 'Pointez la caméra vers le Graphic ID', guideSub: 'Pas besoin de cadrer · Tenez à ~10cm',
+                 recognizing: 'Reconnaissance...', history: 'HISTORIQUE', noHistory: 'Aucun produit scanné', ago: '', selectProduct: 'Sélectionner', rescan: 'Re-scanner' },
+      de:      { details: 'Details', compare: 'Vergleichen', hardness: 'Härte', type: 'Typ', moisture: 'Feuchtigkeit',
+                 guide: 'Kamera auf die Graphic ID richten', guideSub: 'Kein Einrahmen nötig · ~10cm Abstand halten',
+                 recognizing: 'Erkennung...', history: 'VERLAUF', noHistory: 'Noch keine Produkte gescannt', ago: 'her', selectProduct: 'Produkt wählen', rescan: 'Erneut scannen' },
+      es:      { details: 'Detalles', compare: 'Comparar', hardness: 'Dureza', type: 'Tipo', moisture: 'Humedad',
+                 guide: 'Apunta la cámara al Graphic ID', guideSub: 'No es necesario encuadrar · Mantén ~10cm de distancia',
+                 recognizing: 'Reconociendo...', history: 'HISTORIAL', noHistory: 'No hay productos escaneados', ago: '', selectProduct: 'Seleccionar', rescan: 'Escanear de nuevo' },
+    };
+
+    // Detect language: zh-TW/zh-HK → zh-tw, zh/zh-CN → zh-cn, others → 2-letter code
+    function detectLang() {
+      const nav = (navigator.language || 'en').toLowerCase();
+      if (nav.startsWith('zh')) {
+        if (nav.includes('tw') || nav.includes('hk') || nav.includes('hant')) return 'zh-tw';
+        return 'zh-cn';
+      }
+      return nav.slice(0, 2);
+    }
+    const lang = detectLang();
+    const t = i18n[lang] || i18n.en;
+
+    // Arabic RTL
+    if (lang === 'ar') document.documentElement.setAttribute('dir', 'rtl');
+
+    // Apply translations
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (t[key]) el.textContent = t[key];
+    });
+    document.getElementById('guide-text').innerHTML = t.guide + (t.guideSub ? '<div class="guide-sub">' + t.guideSub + '</div>' : '');
+
+    // ── Scan Guide State Machine ──
+    const guideEl = document.getElementById('scan-guide');
+    const guideTextEl = document.getElementById('guide-text');
+
+    function setGuideIdle() {
+      guideEl.classList.remove('hidden', 'recognizing');
+      guideTextEl.innerHTML = t.guide + (t.guideSub ? '<div class="guide-sub">' + t.guideSub + '</div>' : '');
+    }
+    function setGuideRecognizing() {
+      guideEl.classList.remove('hidden');
+      guideEl.classList.add('recognizing');
+      guideTextEl.innerHTML = t.recognizing;
+    }
+    function setGuideHidden() {
+      guideEl.classList.add('hidden');
+      guideEl.classList.remove('recognizing');
+    }
+
+    // Step 1: Start our own camera immediately
+    async function startCamera() {
+      try {
+        dlog('Starting own camera...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+        const v = document.getElementById('camera-video');
+        v.srcObject = stream;
+        cameraStream = stream;
+        await v.play();
+        dlog('Own camera active: ' + v.videoWidth + 'x' + v.videoHeight);
+        document.getElementById('load-text').textContent = 'Loading AR...';
+      } catch(e) {
+        dlog('Own camera failed: ' + e.message);
+      }
+    }
+    startCamera();
+
+    // Step 2: Load products
+    fetch('products.json')
+      .then(r => r.json())
+      .then(d => { products = d.products; dlog('Products: ' + d.products.length); })
+      .catch(e => dlog('products err: ' + e.message));
+
+    // Step 3: A-Frame / MindAR events
+    const scene = document.querySelector('a-scene');
+
+    scene.addEventListener('arReady', () => {
+      dlog('<span style="color:#0f0">AR READY!</span>');
+      document.getElementById('loading').classList.add('hidden');
+    });
+
+    scene.addEventListener('arError', () => {
+      dlog('<span style="color:red">AR ERROR</span>');
+      document.getElementById('load-text').textContent = 'AR failed';
+    });
+
+    // Fallback: if arReady never fires, hide loading after 30s
+    setTimeout(() => {
+      const loading = document.getElementById('loading');
+      if (!loading.classList.contains('hidden')) {
+        dlog('Timeout 30s - hiding loading anyway');
+        loading.classList.add('hidden');
+      }
+    }, 30000);
+
+    scene.addEventListener('loaded', () => {
+      dlog('Scene loaded');
+      const targets = scene.querySelectorAll('[mindar-image-target]');
+      dlog('Targets: ' + targets.length);
+
+      targets.forEach(el => {
+        el.addEventListener('targetFound', () => {
+          const no = parseInt(el.getAttribute('data-product'));
+          dlog('<span style="color:cyan">TARGET FOUND: #' + no + '</span>');
+          // 진동 + 소리 피드백
+          if (navigator.vibrate) navigator.vibrate(80);
+          playBeep();
+          // 타이머 취소
+          if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+          if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+          // 다른 제품이면 전환 애니메이션
+          if (no !== currentNo) {
+            setGuideRecognizing();
+            setTimeout(() => showProduct(no), 500);
+          } else {
+            showProduct(no);
+          }
+        });
+
+        el.addEventListener('targetLost', () => {
+          const no = parseInt(el.getAttribute('data-product'));
+          dlog('TARGET LOST: #' + no);
+          // 2초 후 스캔 가이드 표시 (다른 제품 스캔 유도)
+          if (scanTimer) clearTimeout(scanTimer);
+          scanTimer = setTimeout(() => {
+            setGuideIdle();
+          }, 2000);
+          // 15초 후 제품 패널 숨김
+          if (hideTimer) clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => {
+            dlog('Auto-hide product');
+            hideProduct();
+          }, HIDE_DELAY);
+        });
+      });
+    });
+
+    function showProduct(no) {
+      if (!products) return;
+      const p = products[no];
+      if (!p) return;
+      currentNo = no;
+
+      document.getElementById('p-name').textContent = p.name;
+      document.getElementById('p-hard').textContent = p.hardness;
+      document.getElementById('p-ph').textContent = p.pH;
+      document.getElementById('p-type').textContent = p.emulsion;
+      document.getElementById('p-moist').textContent = p.moisture_pct;
+      document.getElementById('btn-buy').href = p.product_url;
+
+      const video = document.getElementById('panel-video');
+      if (video.getAttribute('data-no') !== String(no)) {
+        video.src = p.video_480p;
+        video.setAttribute('data-no', String(no));
+        video.load();
+      }
+      video.play().catch(() => {});
+
+      document.getElementById('info-panel').classList.add('show');
+      setGuideHidden();
+      addHistory(no);
+    }
+
+    function hideProduct() {
+      currentNo = -1;
+      document.getElementById('panel-video').pause();
+      document.getElementById('info-panel').classList.remove('show');
+      setGuideIdle();
+    }
+
+    // ── Tap-to-Reset + Touch-to-Focus ──
+    function resetScan() {
+      dlog('Reset scan (tap)');
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+      hideProduct();
+    }
+
+    // Show focus ring indicator at touch point
+    function showFocusRing(x, y) {
+      const ring = document.createElement('div');
+      ring.className = 'focus-ring';
+      ring.style.left = x + 'px';
+      ring.style.top = y + 'px';
+      document.body.appendChild(ring);
+      ring.addEventListener('animationend', function() { ring.remove(); });
+    }
+
+    // 활성 카메라 트랙 찾기 (MindAR 내부 포함)
+    function getActiveVideoTrack() {
+      // 1순위: 우리 cameraStream
+      if (cameraStream) {
+        const t = cameraStream.getVideoTracks()[0];
+        if (t && t.readyState === 'live') return t;
+      }
+      // 2순위: 모든 video 요소에서 트랙 찾기 (MindAR 포함)
+      const videos = document.querySelectorAll('video');
+      for (const v of videos) {
+        if (v.id === 'panel-video') continue;
+        if (v.srcObject) {
+          const t = v.srcObject.getVideoTracks()[0];
+          if (t && t.readyState === 'live') return t;
+        }
+      }
+      return null;
+    }
+
+    // Attempt camera auto-focus at touch point
+    function tryFocusAt(x, y) {
+      try {
+        const track = getActiveVideoTrack();
+        if (!track) return;
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const nx = x / window.innerWidth;
+        const ny = y / window.innerHeight;
+        if (caps.focusMode && caps.focusMode.includes('manual')) {
+          track.applyConstraints({
+            advanced: [{ focusMode: 'manual', pointOfInterest: { x: nx, y: ny } }]
+          }).then(function() {
+            dlog('Focus at (' + nx.toFixed(2) + ',' + ny.toFixed(2) + ')');
+            setTimeout(function() {
+              track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){});
+            }, 2000);
+          }).catch(function(){});
+        } else if (caps.focusMode && caps.focusMode.includes('continuous')) {
+          // continuous만 지원 시 재시작으로 초점 갱신
+          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){});
+        }
+      } catch(e) { /* focus API not supported */ }
+    }
+
+    // ── Tap counter: 인식 안될 때 직접 선택 유도 ──
+    let tapCount = 0;
+    let tapTimer = null;
+    const TAP_SUGGEST_COUNT = 3;   // 3번 탭 시 유도
+    let suggestShown = false;
+
+    function showSelectSuggest() {
+      if (suggestShown) return;
+      suggestShown = true;
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9000;background:rgba(0,0,0,0.92);color:#fff;padding:0.9rem 1.2rem;border-radius:12px;display:flex;align-items:center;gap:0.8rem;font-size:0.82rem;backdrop-filter:blur(8px);border:1px solid rgba(200,184,154,0.3);white-space:nowrap;';
+      toast.innerHTML = '인식이 어려우신가요? <button onclick="this.parentElement.remove();suggestShown=false;toggleSelect();" style="padding:0.5rem 1.2rem;background:#c8b89a;color:#000;border:none;border-radius:8px;font-size:0.8rem;font-weight:600;cursor:pointer;white-space:nowrap;">직접 선택</button>';
+      document.body.appendChild(toast);
+      setTimeout(() => { if (toast.parentElement) toast.remove(); suggestShown = false; }, 4000);
+    }
+
+    // Main tap handler: focus ring + reset/focus + select suggest
+    document.addEventListener('click', function(e) {
+      // Ignore taps on UI elements
+      var el = e.target;
+      while (el) {
+        if (el.id === 'info-panel' || el.id === 'select-panel' || el.id === 'history-panel' ||
+            el.id === 'top-bar' || el.id === 'debug-log' || el.id === 'loading' ||
+            el.id === 'select-overlay' || el.id === 'history-overlay') return;
+        if (el.tagName === 'BUTTON' || el.tagName === 'A') return;
+        el = el.parentElement;
+      }
+
+      // Show focus ring at tap point
+      showFocusRing(e.clientX, e.clientY);
+
+      // Try camera focus
+      tryFocusAt(e.clientX, e.clientY);
+
+      // If product panel is showing, reset to scan mode
+      if (currentNo !== -1) {
+        resetScan();
+        tapCount = 0;
+        return;
+      }
+
+      // 제품 미인식 상태에서 연속 탭 → 직접 선택 유도
+      tapCount++;
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => { tapCount = 0; }, 5000);
+      if (tapCount >= TAP_SUGGEST_COUNT) {
+        showSelectSuggest();
+        tapCount = 0;
+      }
+    });
+
+    // ── History ──
+    const history = []; // { no, time }
+
+    function addHistory(no) {
+      // 중복 제거 (같은 제품은 최신으로 이동)
+      const idx = history.findIndex(h => h.no === no);
+      if (idx !== -1) history.splice(idx, 1);
+      history.unshift({ no, time: Date.now() });
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const list = document.getElementById('hist-list');
+      const empty = document.getElementById('hist-empty');
+      const badge = document.getElementById('hist-badge');
+
+      if (history.length === 0) {
+        empty.style.display = 'block';
+        badge.classList.remove('show');
+        return;
+      }
+      empty.style.display = 'none';
+      badge.textContent = history.length;
+      badge.classList.add('show');
+
+      // 기존 아이템 제거 (empty 제외)
+      list.querySelectorAll('.hist-item').forEach(el => el.remove());
+
+      history.forEach(h => {
+        if (!products) return;
+        const p = products[h.no];
+        if (!p) return;
+
+        const item = document.createElement('div');
+        item.className = 'hist-item';
+        item.onclick = () => { showProduct(h.no); toggleHistory(); };
+
+        const elapsed = Math.floor((Date.now() - h.time) / 1000);
+        let timeStr;
+        if (elapsed < 60) timeStr = `${elapsed}s ${t.ago}`;
+        else if (elapsed < 3600) timeStr = `${Math.floor(elapsed / 60)}m ${t.ago}`;
+        else timeStr = `${Math.floor(elapsed / 3600)}h ${t.ago}`;
+
+        item.innerHTML = `
+          <img class="hist-item-img" src="${p.preview}" alt="${p.name}">
+          <div class="hist-item-info">
+            <div class="hist-item-name">${p.name}</div>
+            <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);margin-top:2px;">H:${p.hardness} · pH${p.pH} · ${p.emulsion} · ${p.moisture_pct}%</div>
+            <div class="hist-item-time">${timeStr}</div>
+          </div>`;
+        list.appendChild(item);
+      });
+    }
+
+    // ── Product Select Panel ──
+    function buildSelectGrid() {
+      if (!products) return;
+      const grid = document.getElementById('sel-grid');
+      if (grid.children.length > 0) return; // already built
+      products.forEach((p, i) => {
+        const item = document.createElement('div');
+        item.className = 'sel-item';
+        item.onclick = () => { toggleSelect(); showProduct(i); };
+        item.innerHTML = `<img src="${p.preview}" alt="${p.name}" loading="lazy"><div class="sel-label">no.${i}</div>`;
+        grid.appendChild(item);
+      });
+    }
+
+    function toggleSelect() {
+      const panel = document.getElementById('select-panel');
+      const overlay = document.getElementById('select-overlay');
+      const isOpen = panel.classList.contains('open');
+      if (isOpen) {
+        panel.classList.remove('open');
+        overlay.classList.remove('show');
+      } else {
+        buildSelectGrid();
+        panel.classList.add('open');
+        overlay.classList.add('show');
+      }
+    }
+
+    function toggleHistory() {
+      const panel = document.getElementById('history-panel');
+      const overlay = document.getElementById('history-overlay');
+      const isOpen = panel.classList.contains('open');
+      if (isOpen) {
+        panel.classList.remove('open');
+        overlay.classList.remove('show');
+      } else {
+        renderHistory(); // 시간 갱신
+        panel.classList.add('open');
+        overlay.classList.add('show');
+      }
+    }
+
+    // ══════════════════════════════════════════════
+    // ── OCR Fallback (Tesseract.js) ──
+    // MindAR이 인식 못하는 제품의 "no.XX" 텍스트를 읽어서 매칭
+    // ══════════════════════════════════════════════
+    let ocrWorker = null;
+    let ocrRunning = false;
+    let ocrInterval = null;
+    let ocrCanvas = null;
+    let ocrCtx = null;
+    let ocrReady = false;
+    const OCR_INTERVAL_MS = 2500;   // 2.5초마다 스캔
+    const OCR_MAX_W = 640;          // OCR 캔버스 최대 너비 (해상도↑ = 인식률↑)
+    let lastOcrNo = -1;
+    let ocrConfirmCount = 0;
+    const OCR_CONFIRM_NEEDED = 2;   // 2회 연속 같은 번호 -> 확정
+    let ocrScanCount = 0;
+
+    function updateOCRStatus(msg, state) {
+      const el = document.getElementById('ocr-status');
+      if (!el) return;
+      el.className = '';  // reset
+      if (state === 'active') { el.classList.add('active'); el.innerHTML = '<span class="ocr-dot"></span>' + msg; }
+      else if (state === 'error') { el.classList.add('error'); el.textContent = msg; }
+      else { el.textContent = msg; }
+    }
+
+    async function initOCR() {
+      if (ocrReady) return;
+      try {
+        updateOCRStatus('OCR 로딩 중...', '');
+        dlog('<span style="color:yellow">OCR 초기화 시작...</span>');
+        ocrWorker = await Tesseract.createWorker('eng', 1, {
+          logger: (m) => {
+            if (m.status === 'loading tesseract core') updateOCRStatus('OCR 엔진 로딩...', '');
+            else if (m.status === 'loading language traineddata') updateOCRStatus('언어 데이터 로딩...', '');
+            else if (m.status === 'initializing api') updateOCRStatus('OCR 초기화...', '');
+            if (m.progress) dlog('OCR: ' + m.status + ' ' + Math.round(m.progress*100) + '%');
+          }
+        });
+        dlog('OCR 워커 생성 완료');
+        await ocrWorker.setParameters({
+          tessedit_pageseg_mode: '11',
+          tessedit_char_whitelist: '0123456789noNO.,:; '
+        });
+        ocrCanvas = document.createElement('canvas');
+        ocrCtx = ocrCanvas.getContext('2d', { willReadFrequently: true });
+        ocrReady = true;
+        dlog('<span style="color:lime">★ OCR 준비 완료!</span>');
+        updateOCRStatus('텍스트 인식 활성', 'active');
+        startOCRLoop();
+      } catch(e) {
+        dlog('<span style="color:red">OCR 초기화 실패: ' + e.message + '</span>');
+        updateOCRStatus('OCR 로딩 실패', 'error');
+      }
+    }
+
+    function startOCRLoop() {
+      if (ocrInterval) return;
+      ocrInterval = setInterval(runOCR, OCR_INTERVAL_MS);
+      dlog('OCR 루프 시작');
+    }
+
+    function stopOCRLoop() {
+      if (ocrInterval) {
+        clearInterval(ocrInterval);
+        ocrInterval = null;
+      }
+    }
+
+    // OCR용 프레임 캡처 (중앙 크롭 + 전처리)
+    // mode: 'normal'=대비강화, 'bw'=흑백이진화, 'invert'=반전
+    function captureOCRFrame(v, mode) {
+      const sw = v.videoWidth, sh = v.videoHeight;
+      // 중앙 80%x60% 크롭 (제품 라벨이 화면 중앙에 위치)
+      const cropW = Math.floor(sw * 0.8);
+      const cropH = Math.floor(sh * 0.6);
+      const cropX = Math.floor((sw - cropW) / 2);
+      const cropY = Math.floor((sh - cropH) / 2);
+      const scale = Math.min(1, OCR_MAX_W / cropW);
+      const dw = Math.floor(cropW * scale);
+      const dh = Math.floor(cropH * scale);
+      ocrCanvas.width = dw;
+      ocrCanvas.height = dh;
+      ocrCtx.drawImage(v, cropX, cropY, cropW, cropH, 0, 0, dw, dh);
+
+      const imgData = ocrCtx.getImageData(0, 0, dw, dh);
+      const d = imgData.data;
+
+      if (mode === 'bw') {
+        // 그레이스케일 → Otsu 이진화
+        const gray = new Uint8Array(dw * dh);
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+          gray[j] = Math.round(d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114);
+        }
+        // Otsu threshold
+        const hist = new Array(256).fill(0);
+        for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+        let total = gray.length, sum = 0;
+        for (let i = 0; i < 256; i++) sum += i * hist[i];
+        let sumB = 0, wB = 0, maxVar = 0, threshold = 128;
+        for (let i = 0; i < 256; i++) {
+          wB += hist[i]; if (wB === 0) continue;
+          const wF = total - wB; if (wF === 0) break;
+          sumB += i * hist[i];
+          const mB = sumB / wB, mF = (sum - sumB) / wF;
+          const bv = wB * wF * (mB - mF) * (mB - mF);
+          if (bv > maxVar) { maxVar = bv; threshold = i; }
+        }
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+          const bw = gray[j] > threshold ? 255 : 0;
+          d[i] = d[i+1] = d[i+2] = bw;
+        }
+      } else if (mode === 'invert') {
+        // 그레이스케일 → 반전 (밝은 글자용)
+        for (let i = 0; i < d.length; i += 4) {
+          const g = Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
+          d[i] = d[i+1] = d[i+2] = 255 - g;
+        }
+      } else {
+        // normal: 대비 2.2배 + 그레이스케일
+        for (let i = 0; i < d.length; i += 4) {
+          const g = Math.round(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
+          const c = Math.max(0, Math.min(255, ((g-128)*2.2)+128));
+          d[i] = d[i+1] = d[i+2] = c;
+        }
+      }
+      ocrCtx.putImageData(imgData, 0, 0);
+      return { dw, dh };
+    }
+
+    // "no.XX" 패턴 찾기 (다양한 OCR 오인식 대응)
+    function findNoPattern(text) {
+      if (!text) return -1;
+      const t = text.replace(/\s+/g, '');
+      // 패턴 1: no.XX, NO.XX, n0.XX, nO.XX 등 (dot)
+      let m = t.match(/[nN][oO0][.,;:]\s*(\d{1,2})/);
+      if (m) { const n = parseInt(m[1]); if (n >= 0 && n <= 29) return n; }
+      // 패턴 2: no XX (공백으로 분리)
+      m = text.match(/[nN][oO0][\s.,:;]+(\d{1,2})/);
+      if (m) { const n = parseInt(m[1]); if (n >= 0 && n <= 29) return n; }
+      // 패턴 3: 순수 숫자 2자리 (다른 텍스트 없을 때)
+      if (t.length <= 4) {
+        m = t.match(/^(\d{1,2})$/);
+        if (m) { const n = parseInt(m[1]); if (n >= 0 && n <= 29) return n; }
+      }
+      return -1;
+    }
+
+    // OCR용 비디오 요소 찾기 (MindAR 내부 > 우리 camera-video)
+    function getOCRVideo() {
+      // 1순위: MindAR 내부 비디오 (확실히 카메라 프레임 있음)
+      const arVideos = document.querySelectorAll('video');
+      for (const v of arVideos) {
+        if (v.id !== 'panel-video' && v.id !== 'camera-video' && v.videoWidth > 0) return v;
+      }
+      // 2순위: MindAR가 만든 비디오 (클래스나 속성으로)
+      const mindarVideo = document.querySelector('.mindar-ui-overlay video, a-scene video');
+      if (mindarVideo && mindarVideo.videoWidth > 0) return mindarVideo;
+      // 3순위: 우리 camera-video
+      const cv = document.getElementById('camera-video');
+      if (cv && cv.videoWidth > 0) return cv;
+      return null;
+    }
+
+    async function runOCR() {
+      if (ocrRunning || !ocrReady) return;
+      if (currentNo !== -1) { lastOcrNo = -1; ocrConfirmCount = 0; return; }
+
+      const v = getOCRVideo();
+      if (!v) { if (ocrScanCount < 3) dlog('OCR: 비디오 없음'); return; }
+      if (ocrScanCount === 0) dlog('OCR 비디오: ' + (v.id || 'MindAR') + ' ' + v.videoWidth + 'x' + v.videoHeight);
+
+      ocrRunning = true;
+      ocrScanCount++;
+      try {
+        const t0 = performance.now();
+        let detected = -1;
+        const texts = [];
+
+        // 3-Pass OCR: normal(대비강화) → bw(이진화) → invert(반전)
+        const passes = ['normal', 'bw', 'invert'];
+        let lastDW = 0, lastDH = 0;
+
+        for (let pi = 0; pi < passes.length; pi++) {
+          const { dw, dh } = captureOCRFrame(v, passes[pi]);
+          lastDW = dw; lastDH = dh;
+
+          // 첫 패스에서 디버그 미리보기 업데이트
+          if (pi === 0) {
+            const prevCanvas = document.getElementById('ocr-preview-canvas');
+            if (prevCanvas) { prevCanvas.width = dw; prevCanvas.height = dh; prevCanvas.getContext('2d').drawImage(ocrCanvas, 0, 0); }
+          }
+
+          const r = await ocrWorker.recognize(ocrCanvas);
+          const txt = r.data.text.trim();
+          texts.push(passes[pi][0].toUpperCase() + ':' + (txt || '-'));
+          detected = findNoPattern(txt);
+          if (detected >= 0) break;  // 발견하면 즉시 중단
+        }
+
+        const elapsed = Math.round(performance.now() - t0);
+        const allText = texts.join(' | ');
+
+        // 디버그 미리보기 텍스트 업데이트
+        const prevText = document.getElementById('ocr-preview-text');
+        if (prevText) prevText.textContent = (detected >= 0 ? '→no.' + detected + ' ' : '') + allText.substring(0, 80) || '(텍스트 없음)';
+
+        if (ocrScanCount <= 5 || detected >= 0 || ocrScanCount % 5 === 0) {
+          dlog('OCR#' + ocrScanCount + ' ' + elapsed + 'ms ' + lastDW + 'x' + lastDH + ': "' + allText.substring(0, 120) + '"');
+        }
+
+        if (detected >= 0) {
+          dlog('<span style="color:yellow">OCR 감지: no.' + detected + ' (' + (ocrConfirmCount+1) + '/' + OCR_CONFIRM_NEEDED + ')</span>');
+          if (detected === lastOcrNo) {
+            ocrConfirmCount++;
+            if (ocrConfirmCount >= OCR_CONFIRM_NEEDED) {
+              dlog('<span style="color:cyan">★ OCR 확정: no.' + detected + '</span>');
+              if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+              playBeep();
+              setGuideRecognizing();
+              setTimeout(() => showProduct(detected), 500);
+              lastOcrNo = -1; ocrConfirmCount = 0;
+            }
+          } else { lastOcrNo = detected; ocrConfirmCount = 1; }
+        } else { lastOcrNo = -1; ocrConfirmCount = 0; }
+      } catch(e) {
+        dlog('<span style="color:red">OCR err: ' + e.message + '</span>');
+      }
+      ocrRunning = false;
+    }
+
+    // Tesseract.js 로드 확인 후 OCR 시작
+    function tryStartOCR() {
+      if (typeof Tesseract === 'undefined') {
+        dlog('<span style="color:red">Tesseract.js 로드 안됨!</span>');
+        updateOCRStatus('OCR 라이브러리 없음', 'error');
+        return;
+      }
+      dlog('Tesseract.js 확인 → initOCR');
+      initOCR();
+    }
+
+    // AR 준비 후 OCR 초기화 (MindAR과 병행)
+    scene.addEventListener('arReady', () => {
+      dlog('arReady!');
+      setTimeout(tryStartOCR, 2000);
+    });
+
+    // arReady 안 오는 경우 대비 (12초 후)
+    setTimeout(() => {
+      if (!ocrReady) {
+        dlog('12초 대기 → OCR 독립 시작');
+        tryStartOCR();
+      }
+    }, 12000);
+
+  </script>
+</body>
+</html>
