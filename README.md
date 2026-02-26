@@ -12,7 +12,9 @@ Point your phone camera at any of the 30 intrinsic series products to instantly 
 - Recognizes 30 skincare products (no.0 ~ no.29) in real-time through the phone camera
 - Displays product properties: hardness, pH, emulsion type, moisture percentage
 - Plays texture videos for each product
-- Supports 11 languages (auto-detected from browser): KO, EN, JA, ZH, DE, FR, ES, IT, PT, RU, AR
+- Supports 11 languages (auto-detected from browser): KO, EN, JA, ZH-CN, ZH-TW, DE, FR, ES, VI, TH, AR
+- Localized product names per language (e.g. 본연, 本然, جوهر, intrínseco)
+- Language-aware store links route to the correct locale
 - Works entirely in the browser — no app install required
 
 ---
@@ -128,9 +130,10 @@ Users had no feedback when recognition failed. They would keep pointing the came
 ## File Structure
 
 ```
-index.html          — Full AR viewer (single-file, all JS/CSS inline)
-products.json       — 30 product data (name, specs, video URLs)
-targets_all.mind    — MindAR compiled image targets (69 targets, ~29MB)
+index.html                    — Full AR viewer (single-file, all JS/CSS inline)
+products.json                 — 30 product data (name, specs, video URLs)
+targets_all.mind              — MindAR compiled image targets (69 targets, ~29MB)
+acosmeticstory color logo.png — Brand logo (loading screen + top bar)
 ```
 
 ---
@@ -158,9 +161,22 @@ Video URLs are sourced from the Shopify product pages at `acosmeticstory.com`.
 
 ## Localization
 
-UI automatically displays in the user's browser language. Supported:
+UI and product names automatically display in the user's browser language.
 
-`ko` `en` `ja` `zh` `de` `fr` `es` `it` `pt` `ru` `ar`
+| Language | Product Name Format | Example |
+|----------|-------------------|---------|
+| Korean (`ko`) | 본연 {no} | 본연 0 |
+| Japanese (`ja`) | 本然 no.{no} | 本然 no.0 |
+| Chinese (`zh-cn`, `zh-tw`) | 本然 no.{no} | 本然 no.0 |
+| Arabic (`ar`) | جوهر no.{no} | جوهر no.0 |
+| French (`fr`) | intrinsic n°{no} | intrinsic n°0 |
+| Vietnamese (`vi`) | bản chất no.{no} | bản chất no.0 |
+| Thai (`th`) | อินทรินสิค no.{no} | อินทรินสิค no.0 |
+| German (`de`) | Intrinsisch Nr.{no} | Intrinsisch Nr.0 |
+| Spanish (`es`) | intrínseco no.{no} | intrínseco no.0 |
+| English (default) | intrinsic no.{no} | intrinsic no.0 |
+
+Product detail links also route to the matching language storefront on acosmeticstory.com.
 
 Fallback: English
 

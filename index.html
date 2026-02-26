@@ -9,6 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <!-- Tesseract.js for OCR fallback -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <link rel="stylesheet" href="https://use.typekit.net/pmw3lrc.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -306,13 +307,13 @@
   <div id="debug-log"></div>
 
   <div id="loading">
-    <h1>intrinsic</h1>
+    <img src="acosmeticstory color logo.png" alt="acosmeticstory" style="height:24px;object-fit:contain;margin-bottom:1.5rem;">
     <div class="spinner"></div>
     <div id="load-text">Starting...</div>
   </div>
 
   <div id="top-bar">
-    <span class="brand" id="brand-logo">acosmeticstory</span>
+    <img src="acosmeticstory color logo.png" alt="acosmeticstory" id="brand-logo" class="brand" style="height:14px;object-fit:contain;cursor:pointer;">
     <div style="display:flex;gap:6px;align-items:center;">
     <button class="top-btn" id="select-btn" onclick="toggleSelect()" data-i18n="selectProduct">직접 선택</button>
     <button id="history-btn" onclick="toggleHistory()">
@@ -499,6 +500,24 @@
     const lang = detectLang();
     const t = i18n[lang] || i18n.en;
 
+    // ── Localized product names ──
+    const namePrefix = {
+      ko:      (no) => `본연 ${no}`,
+      ja:      (no) => `本然 no.${no}`,
+      'zh-cn': (no) => `本然 no.${no}`,
+      'zh-tw': (no) => `本然 no.${no}`,
+      ar:      (no) => `جوهر no.${no}`,
+      fr:      (no) => `intrinsic n°${no}`,
+      vi:      (no) => `bản chất no.${no}`,
+      th:      (no) => `อินทรินสิค no.${no}`,
+      de:      (no) => `Intrinsisch Nr.${no}`,
+      es:      (no) => `intrínseco no.${no}`,
+    };
+    function localName(no) {
+      const fn = namePrefix[lang];
+      return fn ? fn(no) : `intrinsic no.${no}`;
+    }
+
     // Arabic RTL
     if (lang === 'ar') document.documentElement.setAttribute('dir', 'rtl');
 
@@ -626,12 +645,14 @@
       if (!p) return;
       currentNo = no;
 
-      document.getElementById('p-name').textContent = p.name;
+      document.getElementById('p-name').textContent = localName(p.no);
       document.getElementById('p-hard').textContent = p.hardness;
       document.getElementById('p-ph').textContent = p.pH;
       document.getElementById('p-type').textContent = p.emulsion;
       document.getElementById('p-moist').textContent = p.moisture_pct;
-      document.getElementById('btn-buy').href = p.product_url;
+      // 언어별 스토어 URL (en은 루트, 나머지는 /lang/ 접두사)
+      const langPrefix = (lang && lang !== 'en') ? '/' + lang : '';
+      document.getElementById('btn-buy').href = p.product_url.replace('acosmeticstory.com/', 'acosmeticstory.com' + langPrefix + '/');
 
       const video = document.getElementById('panel-video');
       if (video.getAttribute('data-no') !== String(no)) {
@@ -809,9 +830,9 @@
         else timeStr = `${Math.floor(elapsed / 3600)}h ${t.ago}`;
 
         item.innerHTML = `
-          <img class="hist-item-img" src="${p.preview}" alt="${p.name}">
+          <img class="hist-item-img" src="${p.preview}" alt="${localName(h.no)}">
           <div class="hist-item-info">
-            <div class="hist-item-name">${p.name}</div>
+            <div class="hist-item-name">${localName(h.no)}</div>
             <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);margin-top:2px;">H:${p.hardness} · pH${p.pH} · ${p.emulsion} · ${p.moisture_pct}%</div>
             <div class="hist-item-time">${timeStr}</div>
           </div>`;
@@ -828,7 +849,7 @@
         const item = document.createElement('div');
         item.className = 'sel-item';
         item.onclick = () => { toggleSelect(); showProduct(i); };
-        item.innerHTML = `<img src="${p.preview}" alt="${p.name}" loading="lazy"><div class="sel-label">no.${i}</div>`;
+        item.innerHTML = `<img src="${p.preview}" alt="${localName(i)}" loading="lazy"><div class="sel-label">${localName(i)}</div>`;
         grid.appendChild(item);
       });
     }
