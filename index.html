@@ -185,6 +185,20 @@
       background: rgba(255,255,255,0.05);
     }
     .sel-item .sel-label { font-size: 0.5rem; color: rgba(255,255,255,0.4); margin-top: 3px; }
+    .sel-tabs {
+      display: flex; gap: 4px; padding: 0.6rem 0.8rem 0;
+    }
+    .sel-tab {
+      flex: 1; padding: 0.5rem 0.6rem;
+      background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.45);
+      border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
+      font-size: 0.68rem; letter-spacing: 0.1em; font-family: inherit;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .sel-tab.active {
+      background: rgba(200,184,154,0.18); color: #c8b89a;
+      border-color: rgba(200,184,154,0.35);
+    }
     #select-overlay {
       position: fixed; inset: 0; z-index: 549;
       background: rgba(0,0,0,0.4); display: none;
@@ -201,9 +215,19 @@
       transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
     }
     #info-panel.show { transform: translateY(0); }
-    .panel-product-name { font-size: 0.85rem; font-weight: 400; letter-spacing: 0.08em; color: #c8b89a; margin-bottom: 0.5rem; }
-    .panel-video-wrap { border-radius: 10px; overflow: hidden; margin-bottom: 0.7rem; position: relative; background: #111; }
+    .panel-name-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; gap: 0.5rem; }
+    .panel-product-name { font-size: 0.85rem; font-weight: 400; letter-spacing: 0.08em; color: #c8b89a; flex: 1; min-width: 0; }
+    .size-btns { display: flex; gap: 4px; flex-shrink: 0; }
+    .size-btn {
+      padding: 0.32rem 0.55rem; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;
+      font-size: 0.62rem; letter-spacing: 0.04em; font-family: inherit;
+      cursor: pointer; transition: all 0.18s;
+    }
+    .size-btn.active { background: rgba(200,184,154,0.25); color: #c8b89a; border-color: rgba(200,184,154,0.5); }
+    .panel-video-wrap { border-radius: 10px; overflow: hidden; margin-bottom: 0.7rem; position: relative; background: #111; min-height: 120px; }
     .panel-video-wrap video { width: 100%; display: block; border-radius: 10px; max-height: 160px; object-fit: cover; }
+    .panel-video-wrap img.panel-image { width: 100%; max-height: 160px; object-fit: contain; display: none; background: #1a1a1a; }
     .props-row { display: flex; gap: 0.4rem; margin-bottom: 0.7rem; }
     .prop { flex: 1; background: rgba(255,255,255,0.07); border-radius: 8px; padding: 0.45rem; text-align: center; }
     .prop-lbl { font-size: 0.48rem; letter-spacing: 0.1em; color: rgba(255,255,255,0.3); }
@@ -353,13 +377,25 @@
       <span class="sel-title" data-i18n="selectProduct">Select product</span>
       <button class="sel-close" onclick="toggleSelect()">&times;</button>
     </div>
+    <div class="sel-tabs">
+      <button class="sel-tab active" data-tab="cores" onclick="switchSelTab('cores')">Cores</button>
+      <button class="sel-tab" data-tab="texture" onclick="switchSelTab('texture')">Texture</button>
+    </div>
     <div class="sel-grid" id="sel-grid"></div>
   </div>
 
   <div id="info-panel">
-    <div class="panel-product-name" id="p-name">intrinsic no.0</div>
+    <div class="panel-name-row">
+      <div class="panel-product-name" id="p-name">intrinsic no.0</div>
+      <div class="size-btns">
+        <button class="size-btn" data-size="7g" onclick="selectSize('7g')">7g</button>
+        <button class="size-btn" data-size="15g" onclick="selectSize('15g')">15g</button>
+        <button class="size-btn" data-size="30g" onclick="selectSize('30g')">30g</button>
+      </div>
+    </div>
     <div class="panel-video-wrap">
       <video id="panel-video" playsinline webkit-playsinline muted loop crossorigin="anonymous"></video>
+      <img id="panel-image" class="panel-image" alt="">
     </div>
     <div class="props-row">
       <div class="prop"><div class="prop-lbl" data-i18n="hardness">Hardness</div><div class="prop-val" id="p-hard">-</div></div>
@@ -660,6 +696,7 @@
         video.setAttribute('data-no', String(no));
         video.load();
       }
+      resetSizeSelection();
       video.play().catch(() => {});
 
       document.getElementById('info-panel').classList.add('show');
@@ -841,17 +878,67 @@
     }
 
     // ── Product Select Panel ──
+    let currentSelTab = 'cores';
+
+    function textureThumb(p) {
+      const m = p.video_480p && p.video_480p.match(/\/vp\/([a-f0-9]+)\//);
+      return m ? `https://cdn.shopify.com/videos/c/vp/${m[1]}/${m[1]}.thumbnail.0000000000.jpg` : p.preview;
+    }
+
     function buildSelectGrid() {
       if (!products) return;
       const grid = document.getElementById('sel-grid');
-      if (grid.children.length > 0) return; // already built
+      grid.innerHTML = '';
       products.forEach((p, i) => {
         const item = document.createElement('div');
         item.className = 'sel-item';
         item.onclick = () => { toggleSelect(); showProduct(i); };
-        item.innerHTML = `<img src="${p.preview}" alt="${localName(i)}" loading="lazy"><div class="sel-label">${localName(i)}</div>`;
+        const imgSrc = currentSelTab === 'texture' ? textureThumb(p) : p.preview;
+        item.innerHTML = `<img src="${imgSrc}" alt="${localName(i)}" loading="lazy"><div class="sel-label">${localName(i)}</div>`;
         grid.appendChild(item);
       });
+    }
+
+    function switchSelTab(tab) {
+      if (currentSelTab === tab) return;
+      currentSelTab = tab;
+      document.querySelectorAll('.sel-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === tab);
+      });
+      buildSelectGrid();
+    }
+
+    function selectSize(size) {
+      if (currentNo < 0 || !products) return;
+      const p = products[currentNo];
+      if (!p) return;
+      const video = document.getElementById('panel-video');
+      const img = document.getElementById('panel-image');
+      const targetBtn = document.querySelector(`.size-btn[data-size="${size}"]`);
+      const wasActive = targetBtn && targetBtn.classList.contains('active');
+      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+      if (wasActive) {
+        img.style.display = 'none';
+        video.style.display = '';
+        video.play().catch(() => {});
+      } else {
+        targetBtn.classList.add('active');
+        const src = p[`image_${size}`];
+        if (src) {
+          img.src = src;
+          img.style.display = 'block';
+          video.style.display = 'none';
+          video.pause();
+        }
+      }
+    }
+
+    function resetSizeSelection() {
+      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+      const img = document.getElementById('panel-image');
+      const video = document.getElementById('panel-video');
+      if (img) img.style.display = 'none';
+      if (video) video.style.display = '';
     }
 
     function toggleSelect() {
