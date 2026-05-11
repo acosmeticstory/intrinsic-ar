@@ -12,6 +12,8 @@ Point your phone camera at any of the 30 intrinsic series products to instantly 
 - Recognizes 30 skincare products (no.0 ~ no.29) in real-time through the phone camera
 - Displays product properties: hardness, pH, emulsion type, moisture percentage
 - Plays texture videos for each product
+- Manual selection grid with **Texture / Cores tabs** (texture video thumbnails or 30g carton images)
+- Weight-specific carton views in info panel — toggle **Texture / 7g / 15g / 30g** for each product
 - Supports 11 languages (auto-detected from browser): KO, EN, JA, ZH-CN, ZH-TW, DE, FR, ES, VI, TH, AR
 - Localized product names per language (e.g. 본연, 本然, جوهر, intrínseco)
 - Language-aware store links route to the correct locale
@@ -125,6 +127,45 @@ Users had no feedback when recognition failed. They would keep pointing the came
 - Touch-to-focus camera control
 - OCR status indicator showing scan activity
 
+### Challenge 5: Slow Image Grid Loading
+
+The 30-item manual-selection grid initially served full-resolution Shopify images
+(1600×1600 PNGs at ~660KB each, ~20MB total) — unusable on mobile networks.
+
+**Solution: Shopify CDN width transformation**
+
+All grid and panel images now request resized variants via `?width=` query parameter:
+
+| Surface | Width | Per-image size | Reduction |
+|---------|-------|----------------|-----------|
+| Manual-selection grid | 300px | 660KB → 44KB | ~15× |
+| Texture-tab thumbnails | 300px | 65KB → 5KB | ~13× |
+| Info-panel size image | 600px | 660KB → 130KB | ~5× |
+| History thumbnails | 200px | 660KB → 22KB | ~30× |
+
+Total grid payload dropped from ~20MB to ~1.3MB. Combined with `loading="lazy"`
+and `decoding="async"`, the panel opens instantly even on slow networks.
+
+### Challenge 6: Per-Weight Visual Reference
+
+A single product comes in three weights (7g / 15g / 30g) with distinct carton
+form factors — but Shopify only exposes the 30g featured image at the product
+endpoint. The other two sizes are only rendered on the collection page when the
+weight filter is toggled.
+
+**Solution: Pattern-derived size URLs**
+
+Reverse-engineered the Shopify file-naming convention from the rendered HTML of
+`/collections/core-capsule?variant={size}`:
+
+```
+core_intrinsic_{7|15|30}_2nd_{N}.png
+```
+
+All 90 URLs (30 products × 3 sizes) were verified live (HEAD 200) and embedded
+directly in `products.json` as `image_7g` / `image_15g` / `image_30g`. The info
+panel renders these inline via `<img>` swap with the texture video.
+
 ---
 
 ## File Structure
@@ -146,16 +187,23 @@ Each product entry in `products.json` contains:
 {
   "no": 0,
   "name": "intrinsic no.0",
-  "preview": "product image URL",
+  "preview": "core cup image URL (Cores-tab thumbnail)",
+  "texture_thumb": "video first-frame thumbnail URL (Texture-tab)",
+  "image_7g":  "core_intrinsic_7_2nd_N.png  — 7g carton",
+  "image_15g": "core_intrinsic_15_2nd_N.png — 15g carton",
+  "image_30g": "core_intrinsic_30_2nd_N.png — 30g carton",
   "hardness": "경도 값",
   "pH": "pH 값",
   "emulsion": "에멀전 타입",
   "moisture_pct": "수분율",
-  "video_720p": "texture video URL"
+  "video_720p": "texture video URL",
+  "video_480p": "texture video URL (mobile)"
 }
 ```
 
 Video URLs are sourced from the Shopify product pages at `acosmeticstory.com`.
+Carton images follow the `core_intrinsic_{size}_2nd_{no}.png` naming convention
+used by the `/collections/core-capsule` weight filter.
 
 ---
 
