@@ -378,8 +378,8 @@
       <button class="sel-close" onclick="toggleSelect()">&times;</button>
     </div>
     <div class="sel-tabs">
-      <button class="sel-tab active" data-tab="cores" onclick="switchSelTab('cores')">Cores</button>
-      <button class="sel-tab" data-tab="texture" onclick="switchSelTab('texture')">Texture</button>
+      <button class="sel-tab active" data-tab="texture" onclick="switchSelTab('texture')">Texture</button>
+      <button class="sel-tab" data-tab="cores" onclick="switchSelTab('cores')">Cores</button>
     </div>
     <div class="sel-grid" id="sel-grid"></div>
   </div>
@@ -878,7 +878,7 @@
     }
 
     // ── Product Select Panel ──
-    let currentSelTab = 'cores';
+    let currentSelTab = 'texture';
 
     function textureThumb(p) {
       return p.texture_thumb || p.preview;
