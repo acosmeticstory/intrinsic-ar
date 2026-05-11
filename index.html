@@ -881,8 +881,7 @@
     let currentSelTab = 'cores';
 
     function textureThumb(p) {
-      const m = p.video_480p && p.video_480p.match(/\/vp\/([a-f0-9]+)\//);
-      return m ? `https://cdn.shopify.com/videos/c/vp/${m[1]}/${m[1]}.thumbnail.0000000000.jpg` : p.preview;
+      return p.texture_thumb || p.preview;
     }
 
     function buildSelectGrid() {
