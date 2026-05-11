@@ -868,7 +868,7 @@
         else timeStr = `${Math.floor(elapsed / 3600)}h ${t.ago}`;
 
         item.innerHTML = `
-          <img class="hist-item-img" src="${p.preview}" alt="${localName(h.no)}">
+          <img class="hist-item-img" src="${withWidth(p.image_30g || p.preview, 200)}" alt="${localName(h.no)}" loading="lazy" decoding="async">
           <div class="hist-item-info">
             <div class="hist-item-name">${localName(h.no)}</div>
             <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);margin-top:2px;">H:${p.hardness} · pH${p.pH} · ${p.emulsion} · ${p.moisture_pct}%</div>
@@ -885,6 +885,11 @@
       return p.texture_thumb || p.preview;
     }
 
+    function withWidth(url, w) {
+      if (!url) return url;
+      return url + (url.includes('?') ? '&' : '?') + 'width=' + w;
+    }
+
     function buildSelectGrid() {
       if (!products) return;
       const grid = document.getElementById('sel-grid');
@@ -893,8 +898,9 @@
         const item = document.createElement('div');
         item.className = 'sel-item';
         item.onclick = () => { toggleSelect(); showProduct(i); };
-        const imgSrc = currentSelTab === 'texture' ? textureThumb(p) : p.preview;
-        item.innerHTML = `<img src="${imgSrc}" alt="${localName(i)}" loading="lazy"><div class="sel-label">${localName(i)}</div>`;
+        const baseSrc = currentSelTab === 'texture' ? textureThumb(p) : (p.image_30g || p.preview);
+        const imgSrc = withWidth(baseSrc, 300);
+        item.innerHTML = `<img src="${imgSrc}" alt="${localName(i)}" loading="lazy" decoding="async"><div class="sel-label">${localName(i)}</div>`;
         grid.appendChild(item);
       });
     }
@@ -924,7 +930,7 @@
       } else {
         const src = p[`image_${size}`];
         if (src) {
-          img.src = src;
+          img.src = withWidth(src, 600);
           img.style.display = 'block';
           video.style.display = 'none';
           video.pause();
