@@ -388,6 +388,7 @@
     <div class="panel-name-row">
       <div class="panel-product-name" id="p-name">intrinsic no.0</div>
       <div class="size-btns">
+        <button class="size-btn active" data-size="texture" onclick="selectSize('texture')">Texture</button>
         <button class="size-btn" data-size="7g" onclick="selectSize('7g')">7g</button>
         <button class="size-btn" data-size="15g" onclick="selectSize('15g')">15g</button>
         <button class="size-btn" data-size="30g" onclick="selectSize('30g')">30g</button>
@@ -913,15 +914,14 @@
       if (!p) return;
       const video = document.getElementById('panel-video');
       const img = document.getElementById('panel-image');
-      const targetBtn = document.querySelector(`.size-btn[data-size="${size}"]`);
-      const wasActive = targetBtn && targetBtn.classList.contains('active');
-      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
-      if (wasActive) {
+      document.querySelectorAll('.size-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.size === size);
+      });
+      if (size === 'texture') {
         img.style.display = 'none';
         video.style.display = '';
         video.play().catch(() => {});
       } else {
-        targetBtn.classList.add('active');
         const src = p[`image_${size}`];
         if (src) {
           img.src = src;
@@ -933,7 +933,9 @@
     }
 
     function resetSizeSelection() {
-      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.size-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.size === 'texture');
+      });
       const img = document.getElementById('panel-image');
       const video = document.getElementById('panel-video');
       if (img) img.style.display = 'none';
